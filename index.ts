@@ -38,6 +38,80 @@ interface KnowledgeGraph {
   relations: Relation[];
 }
 
+interface LocationMatch {
+  text: string;
+  start: number;
+  end: number;
+  type: 'city' | 'state' | 'country' | 'address' | 'landmark';
+}
+
+// Location extraction utilities
+class LocationExtractor {
+  private static readonly LOCATION_PATTERNS = [
+    // Cities with state/country: "New York, NY", "Paris, France"
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*([A-Z]{2}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g,
+    // Addresses: "123 Main St", "456 Oak Avenue"
+    /\b\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Way|Lane|Ln)\b/gi,
+    // Landmarks/Places: "Central Park", "Golden Gate Bridge"
+    /\b(?:Mount|Mt\.?|Lake|River|Park|Bridge|University|Hospital|Airport|Station)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g,
+    // States/Provinces: "California", "Ontario"
+    /\b(?:Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New\s+Hampshire|New\s+Jersey|New\s+Mexico|New\s+York|North\s+Carolina|North\s+Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode\s+Island|South\s+Carolina|South\s+Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West\s+Virginia|Wisconsin|Wyoming)\b/g,
+    // Countries: "United States", "United Kingdom", etc.
+    /\b(?:United\s+States|United\s+Kingdom|Canada|Mexico|France|Germany|Italy|Spain|Japan|China|India|Australia|Brazil|Argentina)\b/g
+  ];
+
+  static extractLocations(text: string): LocationMatch[] {
+    const matches: LocationMatch[] = [];
+
+    this.LOCATION_PATTERNS.forEach((pattern, index) => {
+      let match;
+      const regex = new RegExp(pattern.source, pattern.flags);
+
+      while ((match = regex.exec(text)) !== null) {
+        const locationText = match[0].trim();
+        let type: LocationMatch['type'] = 'landmark';
+
+        // Determine location type based on pattern
+        if (index === 0) type = 'city'; // City, State pattern
+        else if (index === 1) type = 'address'; // Street address
+        else if (index === 2) type = 'landmark'; // Named places
+        else if (index === 3) type = 'state'; // US States
+        else if (index === 4) type = 'country'; // Countries
+
+        matches.push({
+          text: locationText,
+          start: match.index,
+          end: match.index + locationText.length,
+          type
+        });
+      }
+    });
+
+    // Remove duplicates and overlapping matches
+    return this.deduplicateMatches(matches);
+  }
+
+  private static deduplicateMatches(matches: LocationMatch[]): LocationMatch[] {
+    // Sort by start position
+    matches.sort((a, b) => a.start - b.start);
+
+    const filtered: LocationMatch[] = [];
+    for (const match of matches) {
+      // Check if this match overlaps with any previous match
+      const overlaps = filtered.some(existing =>
+        (match.start >= existing.start && match.start < existing.end) ||
+        (match.end > existing.start && match.end <= existing.end)
+      );
+
+      if (!overlaps) {
+        filtered.push(match);
+      }
+    }
+
+    return filtered;
+  }
+}
+
 // The KnowledgeGraphManager class contains all operations to interact with the knowledge graph
 class KnowledgeGraphManager {
   private async loadGraph(): Promise<KnowledgeGraph> {
@@ -190,6 +264,73 @@ class KnowledgeGraphManager {
     };
   
     return filteredGraph;
+  }
+
+  async extractAndAddLocations(text: string, sourceEntity?: string): Promise<{ entities: Entity[], relations: Relation[] }> {
+    const locations = LocationExtractor.extractLocations(text);
+    const newEntities: Entity[] = [];
+    const newRelations: Relation[] = [];
+
+    for (const location of locations) {
+      // Create location entity
+      const locationEntity: Entity = {
+        name: location.text,
+        entityType: 'location',
+        observations: [
+          `Location type: ${location.type}`,
+          `Extracted from text: "${text.substring(Math.max(0, location.start - 20), Math.min(text.length, location.end + 20))}"`,
+          `Original context: positions ${location.start}-${location.end}`
+        ]
+      };
+
+      newEntities.push(locationEntity);
+
+      // If source entity provided, create relation
+      if (sourceEntity) {
+        const relation: Relation = {
+          from: sourceEntity,
+          to: location.text,
+          relationType: 'mentions_location'
+        };
+        newRelations.push(relation);
+      }
+
+      // Create hierarchical relations for compound locations (e.g., "New York, NY")
+      if (location.type === 'city' && location.text.includes(',')) {
+        const parts = location.text.split(',').map(p => p.trim());
+        if (parts.length === 2) {
+          const [city, stateOrCountry] = parts;
+
+          // Create state/country entity if it doesn't exist
+          const parentEntity: Entity = {
+            name: stateOrCountry,
+            entityType: 'location',
+            observations: [
+              `Location type: ${stateOrCountry.length <= 3 ? 'state' : 'country'}`,
+              `Parent location of: ${city}`
+            ]
+          };
+          newEntities.push(parentEntity);
+
+          // Create hierarchical relation
+          const hierarchyRelation: Relation = {
+            from: city,
+            to: stateOrCountry,
+            relationType: 'located_in'
+          };
+          newRelations.push(hierarchyRelation);
+        }
+      }
+    }
+
+    // Add to graph
+    const createdEntities = await this.createEntities(newEntities);
+    const createdRelations = await this.createRelations(newRelations);
+
+    return {
+      entities: createdEntities,
+      relations: createdRelations
+    };
   }
 }
 
@@ -393,6 +534,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           additionalProperties: false,
         },
       },
+      {
+        name: "extract_locations",
+        description: "Extract locations from text and add them to the knowledge graph as entities with geographic relationships",
+        inputSchema: {
+          type: "object",
+          properties: {
+            text: {
+              type: "string",
+              description: "The text to extract locations from"
+            },
+            sourceEntity: {
+              type: "string",
+              description: "Optional: name of source entity that mentions these locations (creates 'mentions_location' relations)"
+            },
+          },
+          required: ["text"],
+          additionalProperties: false,
+        },
+      },
     ],
   };
 });
@@ -428,6 +588,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.searchNodes(args.query as string), null, 2) }] };
     case "open_nodes":
       return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.openNodes(args.names as string[]), null, 2) }] };
+    case "extract_locations":
+      const result = await knowledgeGraphManager.extractAndAddLocations(
+        args.text as string,
+        args.sourceEntity as string | undefined
+      );
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
