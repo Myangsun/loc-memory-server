@@ -2,18 +2,14 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files and source code first
 COPY package*.json ./
 COPY tsconfig.json ./
-
-# Install all dependencies (including dev dependencies for build)
-RUN npm ci
-
-# Copy source files
 COPY index.ts ./
 
-# Build TypeScript
-RUN npm run build
+# Install all dependencies (including dev dependencies for build)
+# The prepare script will run automatically and build the project
+RUN npm ci
 
 FROM node:20-alpine AS release
 
