@@ -2,6 +2,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -9,6 +10,8 @@ import {
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import express from 'express';
+import { randomUUID } from 'node:crypto';
 
 // Define memory file path using environment variable with fallback
 const defaultMemoryPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'memory.json');
@@ -599,25 +602,103 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Knowledge Graph MCP Server running on stdio");
+  // Check if running in stdio mode (for local testing)
+  const isStdio = process.argv.includes('--stdio');
 
-  // Keep the process running - stdin will keep it alive
-  // The transport listens on stdin/stdout automatically
-  process.stdin.resume();
+  if (isStdio) {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("Knowledge Graph MCP Server running on stdio");
+    return;
+  }
 
-  // Handle graceful shutdown
-  process.on('SIGINT', async () => {
-    console.error('Shutting down gracefully...');
-    await server.close();
-    process.exit(0);
+  // HTTP mode for Smithery deployment
+  const app = express();
+  const port = parseInt(process.env.PORT || '8081');
+
+  // CORS middleware
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', '*');
+    res.header('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
   });
 
-  process.on('SIGTERM', async () => {
-    console.error('Shutting down gracefully...');
-    await server.close();
-    process.exit(0);
+  app.use(express.json());
+
+  // Store transports by session ID
+  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+
+  // MCP Streamable HTTP endpoint
+  app.post('/mcp', async (req, res) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    try {
+      let transport: StreamableHTTPServerTransport;
+
+      if (sessionId && transports[sessionId]) {
+        // Existing session
+        transport = transports[sessionId];
+      } else {
+        // New session - create transport
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          enableDnsRebindingProtection: false,
+          onsessioninitialized: (newSessionId: string) => {
+            transports[newSessionId] = transport;
+            console.error(`Session initialized: ${newSessionId}`);
+          },
+          onsessionclosed: (closedSessionId: string) => {
+            delete transports[closedSessionId];
+            console.error(`Session closed: ${closedSessionId}`);
+          },
+        });
+
+        // Clean up on transport close
+        transport.onclose = () => {
+          if (transport.sessionId && transports[transport.sessionId]) {
+            delete transports[transport.sessionId];
+            console.error(`Transport closed for session: ${transport.sessionId}`);
+          }
+        };
+
+        // Connect server to transport
+        await server.connect(transport);
+      }
+
+      // Handle the request
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      console.error('Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error',
+            data: String(error)
+          },
+          id: null
+        });
+      }
+    }
+  });
+
+  // Health check endpoint
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', sessions: Object.keys(transports).length });
+  });
+
+  app.listen(port, '0.0.0.0', () => {
+    console.error(`MCP Server listening on port ${port}`);
+    console.error(`MCP endpoint: http://0.0.0.0:${port}/mcp`);
+    console.error(`Health endpoint: http://0.0.0.0:${port}/health`);
   });
 }
 
