@@ -630,30 +630,34 @@ async function main() {
     // Parse JSON bodies
     app.use(express.json());
 
-    // Store transports for each session
-    const transports: Record<string, StreamableHTTPServerTransport> = {};
-
     // MCP Streamable HTTP endpoint - handles all methods
     app.all('/mcp', async (req, res) => {
       console.error(`MCP ${req.method} request received`);
       console.error('Headers:', JSON.stringify(req.headers));
 
-      // Get or create session ID
-      const sessionId = req.headers['x-session-id'] as string || 'default';
-
-      if (!transports[sessionId]) {
-        console.error(`Creating new transport for session: ${sessionId}`);
+      try {
+        // Create a new transport for each request
         const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => sessionId,
+          sessionIdGenerator: () => Math.random().toString(36).substring(7),
           enableDnsRebindingProtection: false,
         });
 
         await server.connect(transport);
-        transports[sessionId] = transport;
+        await transport.handleRequest(req, res);
+      } catch (error) {
+        console.error('Error handling request:', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: 'Internal error',
+              data: String(error)
+            },
+            id: null
+          });
+        }
       }
-
-      // Handle the request
-      await transports[sessionId].handleRequest(req, res);
     });
 
     // Health check endpoint
