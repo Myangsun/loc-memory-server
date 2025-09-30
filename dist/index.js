@@ -539,11 +539,26 @@ async function main() {
         });
         // Parse JSON bodies
         app.use(express.json());
-        // MCP SSE endpoint
-        app.get('/mcp', async (req, res) => {
-            console.error('SSE connection request received');
-            const transport = new SSEServerTransport('/mcp/message', res);
-            await server.connect(transport);
+        // MCP Streamable HTTP endpoint - POST with SSE response
+        app.post('/mcp', async (req, res) => {
+            console.error('MCP POST request received');
+            console.error('Accept header:', req.headers.accept);
+            console.error('Request body:', JSON.stringify(req.body));
+            // Check if client accepts SSE
+            const acceptsSSE = req.headers.accept?.includes('text/event-stream');
+            if (acceptsSSE) {
+                console.error('Client accepts SSE, establishing SSE transport');
+                // Establish SSE connection
+                const transport = new SSEServerTransport('/mcp', res);
+                await server.connect(transport);
+            }
+            else {
+                // Fallback to JSON response
+                console.error('Client does not accept SSE, using JSON response');
+                res.status(400).json({
+                    error: 'This MCP server requires SSE support. Please include "text/event-stream" in Accept header.'
+                });
+            }
         });
         // Health check endpoint
         app.get('/health', (_req, res) => {
