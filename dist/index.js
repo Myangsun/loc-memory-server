@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -521,7 +521,7 @@ async function main() {
         console.error("Knowledge Graph MCP Server running on stdio");
     }
     else {
-        // Use SSE transport for HTTP server (Smithery deployment)
+        // Use Streamable HTTP transport for HTTP server (Smithery deployment)
         const port = parseInt(process.env.PORT || '3000');
         const express = (await import('express')).default;
         const app = express();
@@ -539,26 +539,25 @@ async function main() {
         });
         // Parse JSON bodies
         app.use(express.json());
-        // MCP Streamable HTTP endpoint - POST with SSE response
-        app.post('/mcp', async (req, res) => {
-            console.error('MCP POST request received');
-            console.error('Accept header:', req.headers.accept);
-            console.error('Request body:', JSON.stringify(req.body));
-            // Check if client accepts SSE
-            const acceptsSSE = req.headers.accept?.includes('text/event-stream');
-            if (acceptsSSE) {
-                console.error('Client accepts SSE, establishing SSE transport');
-                // Establish SSE connection
-                const transport = new SSEServerTransport('/mcp', res);
-                await server.connect(transport);
-            }
-            else {
-                // Fallback to JSON response
-                console.error('Client does not accept SSE, using JSON response');
-                res.status(400).json({
-                    error: 'This MCP server requires SSE support. Please include "text/event-stream" in Accept header.'
+        // Store transports for each session
+        const transports = {};
+        // MCP Streamable HTTP endpoint - handles all methods
+        app.all('/mcp', async (req, res) => {
+            console.error(`MCP ${req.method} request received`);
+            console.error('Headers:', JSON.stringify(req.headers));
+            // Get or create session ID
+            const sessionId = req.headers['x-session-id'] || 'default';
+            if (!transports[sessionId]) {
+                console.error(`Creating new transport for session: ${sessionId}`);
+                const transport = new StreamableHTTPServerTransport({
+                    sessionIdGenerator: () => sessionId,
+                    enableDnsRebindingProtection: false,
                 });
+                await server.connect(transport);
+                transports[sessionId] = transport;
             }
+            // Handle the request
+            await transports[sessionId].handleRequest(req, res);
         });
         // Health check endpoint
         app.get('/health', (_req, res) => {
