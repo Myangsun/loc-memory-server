@@ -3,11 +3,4 @@ build:
   dockerfile: Dockerfile
   dockerBuildPath: .
 startCommand:
-  type: sse
-  port: 3000
-  configSchema:
-    type: object
-    properties:
-      memoryFilePath:
-        type: string
-        description: Optional path to the memory storage file (default is memory.json in the container)
+  type: http
