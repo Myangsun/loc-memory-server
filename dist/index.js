@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -513,69 +512,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 });
 async function main() {
-    const isStdio = process.argv.includes('--stdio');
-    if (isStdio) {
-        // Use stdio transport for local development/testing
-        const transport = new StdioServerTransport();
-        await server.connect(transport);
-        console.error("Knowledge Graph MCP Server running on stdio");
-    }
-    else {
-        // Use Streamable HTTP transport for HTTP server (Smithery deployment)
-        const port = parseInt(process.env.PORT || '3000');
-        const express = (await import('express')).default;
-        const app = express();
-        // Enable CORS for all origins
-        app.use((req, res, next) => {
-            res.header('Access-Control-Allow-Origin', '*');
-            res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            res.header('Access-Control-Allow-Headers', 'Content-Type');
-            if (req.method === 'OPTIONS') {
-                res.sendStatus(200);
-            }
-            else {
-                next();
-            }
-        });
-        // Parse JSON bodies
-        app.use(express.json());
-        // MCP Streamable HTTP endpoint - handles all methods
-        app.all('/mcp', async (req, res) => {
-            console.error(`MCP ${req.method} request received`);
-            console.error('Headers:', JSON.stringify(req.headers));
-            try {
-                // Create a new transport for each request
-                const transport = new StreamableHTTPServerTransport({
-                    sessionIdGenerator: () => Math.random().toString(36).substring(7),
-                    enableDnsRebindingProtection: false,
-                });
-                await server.connect(transport);
-                await transport.handleRequest(req, res);
-            }
-            catch (error) {
-                console.error('Error handling request:', error);
-                if (!res.headersSent) {
-                    res.status(500).json({
-                        jsonrpc: '2.0',
-                        error: {
-                            code: -32603,
-                            message: 'Internal error',
-                            data: String(error)
-                        },
-                        id: null
-                    });
-                }
-            }
-        });
-        // Health check endpoint
-        app.get('/health', (_req, res) => {
-            res.json({ status: 'ok' });
-        });
-        app.listen(port, () => {
-            console.error(`Knowledge Graph MCP Server running on HTTP port ${port}`);
-            console.error(`MCP endpoint: http://localhost:${port}/mcp`);
-        });
-    }
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("Knowledge Graph MCP Server running on stdio");
 }
 main().catch((error) => {
     console.error("Fatal error in main():", error);
