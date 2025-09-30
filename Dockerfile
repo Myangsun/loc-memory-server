@@ -26,6 +26,7 @@ COPY --from=builder /app/dist ./dist
 
 ENV NODE_ENV=production
 
-EXPOSE 3000
+# Smithery expects port 8081
+EXPOSE 8081
 
-ENTRYPOINT ["node", "dist/index.js"]
+CMD ["node", "dist/index.js"]
