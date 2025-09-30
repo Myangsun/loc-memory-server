@@ -615,19 +615,36 @@ async function main() {
     const express = (await import('express')).default;
     const app = express();
 
-    app.get('/sse', async (req, res) => {
+    // Enable CORS for all origins
+    app.use((req, res, next) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type');
+      if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+      } else {
+        next();
+      }
+    });
+
+    // Parse JSON bodies
+    app.use(express.json());
+
+    // MCP SSE endpoint
+    app.get('/mcp', async (req, res) => {
       console.error('SSE connection request received');
-      const transport = new SSEServerTransport('/message', res);
+      const transport = new SSEServerTransport('/mcp/message', res);
       await server.connect(transport);
     });
 
+    // Health check endpoint
     app.get('/health', (_req, res) => {
       res.json({ status: 'ok' });
     });
 
     app.listen(port, () => {
       console.error(`Knowledge Graph MCP Server running on HTTP port ${port}`);
-      console.error(`SSE endpoint: http://localhost:${port}/sse`);
+      console.error(`MCP endpoint: http://localhost:${port}/mcp`);
     });
   }
 }
