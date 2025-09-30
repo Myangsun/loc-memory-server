@@ -1,0 +1,6 @@
+name: loc-memory-server
+version: 1.0.0
+description: Local memory MCP server with knowledge graph storage
+runtime: node
+buildCommand: npm install && npm run build
+startCommand: node dist/index.js
