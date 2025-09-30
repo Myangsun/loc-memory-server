@@ -523,18 +523,19 @@ async function main() {
     else {
         // Use SSE transport for HTTP server (Smithery deployment)
         const port = parseInt(process.env.PORT || '3000');
-        const transport = new SSEServerTransport('/message', server);
         const express = (await import('express')).default;
         const app = express();
-        app.get('/sse', transport.handleSseConnection.bind(transport));
-        app.post('/message', transport.handlePostMessage.bind(transport));
+        app.get('/sse', async (req, res) => {
+            console.error('SSE connection request received');
+            const transport = new SSEServerTransport('/message', res);
+            await server.connect(transport);
+        });
         app.get('/health', (_req, res) => {
             res.json({ status: 'ok' });
         });
         app.listen(port, () => {
             console.error(`Knowledge Graph MCP Server running on HTTP port ${port}`);
             console.error(`SSE endpoint: http://localhost:${port}/sse`);
-            console.error(`Message endpoint: http://localhost:${port}/message`);
         });
     }
 }
