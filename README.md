@@ -1,5 +1,7 @@
 # Loc Knowledge Graph Memory Server
 
+[![smithery badge](https://smithery.ai/badge/@Myangsun/loc-memory-server)](https://smithery.ai/server/@Myangsun/loc-memory-server)
+
 A basic implementation of persistent memory using a local knowledge graph. This lets Claude remember information about the user across chats.
 
 ## Core Concepts
