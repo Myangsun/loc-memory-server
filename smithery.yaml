@@ -1,6 +1,13 @@
-name: loc-memory-server
-version: 1.0.0
-description: Local memory MCP server with knowledge graph storage and location extraction
-runtime: node
-buildCommand: npm install && npm run build
-startCommand: node dist/index.js
+runtime: container
+build:
+  dockerfile: Dockerfile
+  dockerBuildPath: .
+startCommand:
+  type: sse
+  port: 3000
+  configSchema:
+    type: object
+    properties:
+      memoryFilePath:
+        type: string
+        description: Optional path to the memory storage file (default is memory.json in the container)

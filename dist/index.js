@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -512,9 +513,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 });
 async function main() {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error("Knowledge Graph MCP Server running on stdio");
+    const isStdio = process.argv.includes('--stdio');
+    if (isStdio) {
+        // Use stdio transport for local development/testing
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+        console.error("Knowledge Graph MCP Server running on stdio");
+    }
+    else {
+        // Use SSE transport for HTTP server (Smithery deployment)
+        const port = parseInt(process.env.PORT || '3000');
+        const transport = new SSEServerTransport('/message', server);
+        const express = (await import('express')).default;
+        const app = express();
+        app.get('/sse', transport.handleSseConnection.bind(transport));
+        app.post('/message', transport.handlePostMessage.bind(transport));
+        app.get('/health', (_req, res) => {
+            res.json({ status: 'ok' });
+        });
+        app.listen(port, () => {
+            console.error(`Knowledge Graph MCP Server running on HTTP port ${port}`);
+            console.error(`SSE endpoint: http://localhost:${port}/sse`);
+            console.error(`Message endpoint: http://localhost:${port}/message`);
+        });
+    }
 }
 main().catch((error) => {
     console.error("Fatal error in main():", error);

@@ -1,24 +1,35 @@
-FROM node:22.12-alpine AS builder
-
-COPY src/memory /app
-COPY tsconfig.json /tsconfig.json
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-RUN --mount=type=cache,target=/root/.npm npm install
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
 
-RUN --mount=type=cache,target=/root/.npm-production npm ci --ignore-scripts --omit-dev
+# Install all dependencies (including dev dependencies for build)
+RUN npm ci
 
-FROM node:22-alpine AS release
+# Copy source files
+COPY index.ts ./
 
-COPY --from=builder /app/dist /app/dist
-COPY --from=builder /app/package.json /app/package.json
-COPY --from=builder /app/package-lock.json /app/package-lock.json
+# Build TypeScript
+RUN npm run build
+
+FROM node:20-alpine AS release
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install only production dependencies
+RUN npm ci --omit=dev
+
+# Copy built files from builder
+COPY --from=builder /app/dist ./dist
 
 ENV NODE_ENV=production
 
-WORKDIR /app
-
-RUN npm ci --ignore-scripts --omit-dev
+EXPOSE 3000
 
 ENTRYPOINT ["node", "dist/index.js"]
