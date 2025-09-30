@@ -515,6 +515,20 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error("Knowledge Graph MCP Server running on stdio");
+    // Keep the process running - stdin will keep it alive
+    // The transport listens on stdin/stdout automatically
+    process.stdin.resume();
+    // Handle graceful shutdown
+    process.on('SIGINT', async () => {
+        console.error('Shutting down gracefully...');
+        await server.close();
+        process.exit(0);
+    });
+    process.on('SIGTERM', async () => {
+        console.error('Shutting down gracefully...');
+        await server.close();
+        process.exit(0);
+    });
 }
 main().catch((error) => {
     console.error("Fatal error in main():", error);
