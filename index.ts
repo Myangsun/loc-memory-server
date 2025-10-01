@@ -339,18 +339,17 @@ class KnowledgeGraphManager {
 
 const knowledgeGraphManager = new KnowledgeGraphManager();
 
-// Function to create a configured server instance
-function createServer(): Server {
-  const server = new Server({
-    name: "memory-server",
-    version: "0.6.3",
-  },    {
-      capabilities: {
-        tools: {},
-      },
-    },);
+// The server instance shared across all sessions
+const server = new Server({
+  name: "memory-server",
+  version: "0.6.3",
+},    {
+    capabilities: {
+      tools: {},
+    },
+  },);
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
@@ -560,57 +559,53 @@ function createServer(): Server {
   };
 });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
 
-    if (name === "read_graph") {
-      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.readGraph(), null, 2) }] };
-    }
+  if (name === "read_graph") {
+    return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.readGraph(), null, 2) }] };
+  }
 
-    if (!args) {
-      throw new Error(`No arguments provided for tool: ${name}`);
-    }
+  if (!args) {
+    throw new Error(`No arguments provided for tool: ${name}`);
+  }
 
-    switch (name) {
-      case "create_entities":
-        return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createEntities(args.entities as Entity[]), null, 2) }] };
-      case "create_relations":
-        return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createRelations(args.relations as Relation[]), null, 2) }] };
-      case "add_observations":
-        return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.addObservations(args.observations as { entityName: string; contents: string[] }[]), null, 2) }] };
-      case "delete_entities":
-        await knowledgeGraphManager.deleteEntities(args.entityNames as string[]);
-        return { content: [{ type: "text", text: "Entities deleted successfully" }] };
-      case "delete_observations":
-        await knowledgeGraphManager.deleteObservations(args.deletions as { entityName: string; observations: string[] }[]);
-        return { content: [{ type: "text", text: "Observations deleted successfully" }] };
-      case "delete_relations":
-        await knowledgeGraphManager.deleteRelations(args.relations as Relation[]);
-        return { content: [{ type: "text", text: "Relations deleted successfully" }] };
-      case "search_nodes":
-        return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.searchNodes(args.query as string), null, 2) }] };
-      case "open_nodes":
-        return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.openNodes(args.names as string[]), null, 2) }] };
-      case "extract_locations":
-        const result = await knowledgeGraphManager.extractAndAddLocations(
-          args.text as string,
-          args.sourceEntity as string | undefined
-        );
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
-  });
-
-  return server;
-}
+  switch (name) {
+    case "create_entities":
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createEntities(args.entities as Entity[]), null, 2) }] };
+    case "create_relations":
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createRelations(args.relations as Relation[]), null, 2) }] };
+    case "add_observations":
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.addObservations(args.observations as { entityName: string; contents: string[] }[]), null, 2) }] };
+    case "delete_entities":
+      await knowledgeGraphManager.deleteEntities(args.entityNames as string[]);
+      return { content: [{ type: "text", text: "Entities deleted successfully" }] };
+    case "delete_observations":
+      await knowledgeGraphManager.deleteObservations(args.deletions as { entityName: string; observations: string[] }[]);
+      return { content: [{ type: "text", text: "Observations deleted successfully" }] };
+    case "delete_relations":
+      await knowledgeGraphManager.deleteRelations(args.relations as Relation[]);
+      return { content: [{ type: "text", text: "Relations deleted successfully" }] };
+    case "search_nodes":
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.searchNodes(args.query as string), null, 2) }] };
+    case "open_nodes":
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.openNodes(args.names as string[]), null, 2) }] };
+    case "extract_locations":
+      const result = await knowledgeGraphManager.extractAndAddLocations(
+        args.text as string,
+        args.sourceEntity as string | undefined
+      );
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+});
 
 async function main() {
   // Check if running in stdio mode (for local testing)
   const isStdio = process.argv.includes('--stdio');
 
   if (isStdio) {
-    const server = createServer();
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error("Knowledge Graph MCP Server running on stdio");
@@ -648,12 +643,10 @@ async function main() {
       let transport: StreamableHTTPServerTransport;
 
       if (sessionId && transports[sessionId]) {
-        // Existing session
+        // Existing session - reuse transport
         transport = transports[sessionId];
       } else {
-        // New session - create a new server and transport
-        const server = createServer();
-
+        // New session - create new transport
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           enableDnsRebindingProtection: false,
@@ -675,7 +668,7 @@ async function main() {
           }
         };
 
-        // Connect the new server to the transport
+        // Connect the shared server to this transport
         await server.connect(transport);
       }
 
