@@ -630,10 +630,11 @@ async function main() {
     next();
   });
 
-  app.use(express.json());
-
   // Store transports by session ID
   const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+
+  // NOTE: Avoid body-parsing middleware before the MCP route; the transport
+  // needs access to the raw request stream to process multipart messages.
 
   // MCP Streamable HTTP endpoint
   app.post('/mcp', async (req, res) => {
